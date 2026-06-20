@@ -1,10 +1,9 @@
 import zmq
-import time
 import sys
 import threading
 
-from .states import State
-from .messages import AppendEntries
+from states.state import State
+from messages.append_entries import AppendEntries
 
 # Updated on stable storage before responding to RPCs
 class PresistentData():
@@ -38,45 +37,66 @@ class Server():
         pass
 
 class SubThread(threading.Thread):
-    
-    def __init__(self, neighboor_ports: int):
+
+    def __init__(self, neighboor_ports: int, zmq_context):
+        super().__init__()
         self._neighboor_ports = neighboor_ports
-    
+        self._zmq_context = zmq_context
+
     def run(self):
-        context = zmq.Context()
-        socket = context.socket(zmq.SUB)
+        socket = self._zmq_context.socket(zmq.SUB)
 
         for i in range(len(self._neighboor_ports)):
             nport = self._neighboor_ports[i]
-            socket.connect("tcp://localhost{nport}")
-
+            socket.connect(f"tcp://localhost:{nport}")
+            socket.setsockopt_string(zmq.SUBSCRIBE, "")
         while True:
-            # recive messages from other peers
+            # recive messages from pubs
             # handle messages depending on wich state am i
-            pass
+            string = socket.recv_string()
+            print(string)
+
 
 class PubThread(threading.Thread):
-    pass
+
+    def __init__(self, port: int, zmq_context):
+        super().__init__()
+        self._port = port
+        self._zmq_context = zmq_context
+
+    def run(self):
+        socket = self._zmq_context.socket(zmq.PUB)
+        socket.bind(f"tcp://localhost:{self._port}")
+
+        while True:
+            # send messages to subs
+            socket.send_string("ping")
+
 
 def main():
 
-    neighboor_count = sys.argv - 2
-    port = sys.argv[1]
+    neighboor_count = len(sys.argv) - 2
+    port = int(sys.argv[1])
 
     neighboor_ports = []
     for i in range(neighboor_count):
         n_port = int(sys.argv[i + 2])
         neighboor_ports.append(n_port)
 
-
-    context = zmq.Context()
-    socket = context.socket(zmq.PUB)
-    socket.bind("tcp://localhost:{port}")
+    zmq_context = zmq.Context()
 
 
-    sub_thread = SubThread(neighboor_ports)
+    pub_thread = PubThread(port, zmq_context)
+    pub_thread.daemon = True
+    pub_thread.start()
+
+    sub_thread = SubThread(neighboor_ports, zmq_context)
     sub_thread.daemon = True
     sub_thread.start()
+
+    sub_thread.join()
+    pub_thread.join()
+
 
 if __name__ == "__main__":
     main()
