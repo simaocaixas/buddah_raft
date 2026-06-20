@@ -1,9 +1,16 @@
 import zmq
 import sys
 import threading
+import time
+import logging
+from queue import Queue
+
 
 from states.state import State
 from messages.append_entries import AppendEntries
+
+logger = logging.getLogger(__name__)
+msg_queue = Queue(maxsize=100)
 
 # Updated on stable storage before responding to RPCs
 class PresistentData():
@@ -30,11 +37,11 @@ class Server():
     def _on_reciving_command(self) -> None:
         pass
 
-    def _send_message(self) -> None:
-        pass
+    def _send_append_entry(self) -> None:
+        msg_queue.put('append this entry')
 
     def _send_heart_beat(self) -> None:
-        pass
+        msg_queue.put('heartbeat')
 
 class SubThread(threading.Thread):
 
@@ -54,8 +61,7 @@ class SubThread(threading.Thread):
             # recive messages from pubs
             # handle messages depending on wich state am i
             string = socket.recv_string()
-            print(string)
-
+            logger.debug(f"Recived:{string}")
 
 class PubThread(threading.Thread):
 
@@ -71,9 +77,18 @@ class PubThread(threading.Thread):
         while True:
             # send messages to subs
             socket.send_string("ping")
-
+            time.sleep(1)
+            logger.debug("Sent: ping")
 
 def main():
+
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format=" %(levelname)s - %(asctime)s - %(message)s",
+        datefmt='%m/%d/%Y %I:%M:%S %p'
+    )
+
+    logger.info(f"Staring Server Recived Argv: {sys.argv}")
 
     neighboor_count = len(sys.argv) - 2
     port = int(sys.argv[1])
