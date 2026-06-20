@@ -1,5 +1,7 @@
 import zmq
 import time
+import sys
+import threading
 
 from .states import State
 from .messages import AppendEntries
@@ -35,22 +37,46 @@ class Server():
     def _send_heart_beat(self) -> None:
         pass
 
+class SubThread(threading.Thread):
+    
+    def __init__(self, neighboor_ports: int):
+        self._neighboor_ports = neighboor_ports
+    
+    def run(self):
+        context = zmq.Context()
+        socket = context.socket(zmq.SUB)
+
+        for i in range(len(self._neighboor_ports)):
+            nport = self._neighboor_ports[i]
+            socket.connect("tcp://localhost{nport}")
+
+        while True:
+            # recive messages from other peers
+            # handle messages depending on wich state am i
+            pass
+
+class PubThread(threading.Thread):
+    pass
+
 def main():
-    print("Node Starting...")
+
+    neighboor_count = sys.argv - 2
+    port = sys.argv[1]
+
+    neighboor_ports = []
+    for i in range(neighboor_count):
+        n_port = int(sys.argv[i + 2])
+        neighboor_ports.append(n_port)
+
 
     context = zmq.Context()
+    socket = context.socket(zmq.PUB)
+    socket.bind("tcp://localhost:{port}")
 
-    socket = context.socket(zmq.REP)
-    socket.bind("tcp://*:5555")
 
-    while True:
-
-        message = socket.recv()
-        print(f"Received request: {message}")
-
-        time.sleep(1)
-
-        socket.send(b"World")
+    sub_thread = SubThread(neighboor_ports)
+    sub_thread.daemon = True
+    sub_thread.start()
 
 if __name__ == "__main__":
     main()
