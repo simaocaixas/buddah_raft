@@ -6,7 +6,7 @@ import logging
 from queue import Queue
 
 
-from states.state import State
+from states import State, Leader, Follower
 from messages.append_entries import AppendEntries
 
 logger = logging.getLogger(__name__)
@@ -19,6 +19,8 @@ class PresistentData():
         self._current_term = current_term
         self._voted_for = voted_for
         self._log = log
+        self._last_log_idx = 0;
+        self._last_log_term = None;
 
 class VolitileData():
 
@@ -33,15 +35,53 @@ class Server():
         self._presistent_data = presistent_data
         self._volitile_data = volitile_data
         self._state = state
+        self._commit_indx = 0
+        self.start_heartbeat()
 
-    def _on_reciving_command(self) -> None:
-        pass
+    def _on_reciving_command(self, commands) -> None:
+        if isinstance(self._state, Leader):
+            self._log.append(new_entry)
+
+            new_entry = AppendEntries(self._presistent_data._current_term,
+                                      self._id,
+                                      self._presistent_data._last_log_idx,
+                                      self._presistent_data._last_log_term,
+                                      commands,
+                                      self._commit_indx
+                                      )
+
+            msg_queue.append(new_entry)
+
+        elif isinstance(self._state, Follower):
+            # Redirect to leader
+            pass
 
     def _send_append_entry(self) -> None:
         msg_queue.put('append this entry')
 
     def _send_heart_beat(self) -> None:
-        msg_queue.put('heartbeat')
+        if isinstance(self._state, Leader):
+
+            new_entry = AppendEntries(self._presistent_data._current_term,
+                                      self._id,
+                                      self._presistent_data._last_log_idx,
+                                      self._presistent_data._last_log_term,
+                                      [],
+                                      self._commit_indx
+                                      )
+
+            msg_queue.append(new_entry)
+
+    def _schedule(self):
+        self._send_heart_beat()
+        t = threading.Timer(0.1, self._schedule)
+        t.daemon = True
+        t.start()
+
+    def start_heartbeat(self):
+        t = threading.Timer(0.1, self._schedule)
+        t.daemon = True
+        t.start()
 
 class SubThread(threading.Thread):
 
@@ -58,10 +98,8 @@ class SubThread(threading.Thread):
             socket.connect(f"tcp://localhost:{nport}")
             socket.setsockopt_string(zmq.SUBSCRIBE, "")
         while True:
-            # recive messages from pubs
-            # handle messages depending on wich state am i
-            string = socket.recv_string()
-            logger.debug(f"Recived:{string}")
+            msg = socket.recv_json()
+            logger.debug(f"Received: {msg}")
 
 class PubThread(threading.Thread):
 
@@ -76,9 +114,11 @@ class PubThread(threading.Thread):
 
         while True:
             # send messages to subs
-            socket.send_string("ping")
-            time.sleep(1)
-            logger.debug("Sent: ping")
+            msg = msg_queue.get()
+
+            if isinstance(msg, AppendEntries):
+                socket.send_json({"type": "append_entry", "data": msg.to_dict()})
+                logger.debug("Sent: append_entry")
 
 def main():
 
@@ -111,7 +151,6 @@ def main():
 
     sub_thread.join()
     pub_thread.join()
-
 
 if __name__ == "__main__":
     main()
