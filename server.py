@@ -85,10 +85,11 @@ class Server():
 
 class SubThread(threading.Thread):
 
-    def __init__(self, neighboor_ports: int, zmq_context):
+    def __init__(self, neighboor_ports: int, zmq_context, server):
         super().__init__()
         self._neighboor_ports = neighboor_ports
         self._zmq_context = zmq_context
+        self._server = server
 
     def run(self):
         socket = self._zmq_context.socket(zmq.SUB)
@@ -101,12 +102,25 @@ class SubThread(threading.Thread):
             msg = socket.recv_json()
             logger.debug(f"Received: {msg}")
 
+            if isinstance(msg, AppendEntries):
+
+                data = msg.get('data')
+                prev_log_idx = data.get('prev_log_idx')
+                prev_log_term = data.get('prev_log_term')
+                
+                if data.get('term') < self._server.term:
+                    msg_queue.append((msg, False))
+                elif not self._server.log[prev_log_idx] or self._server.log[prev_log_idx].term != prev_log_term:
+                    msg_queue.append((msg, False))
+
+
 class PubThread(threading.Thread):
 
-    def __init__(self, port: int, zmq_context):
+    def __init__(self, port: int, zmq_context, server):
         super().__init__()
         self._port = port
         self._zmq_context = zmq_context
+        self._server = server
 
     def run(self):
         socket = self._zmq_context.socket(zmq.PUB)
@@ -140,12 +154,13 @@ def main():
 
     zmq_context = zmq.Context()
 
+    server = Server(port, PresistentData(0, None, []), VolitileData(0, 0), Follower())
 
-    pub_thread = PubThread(port, zmq_context)
+    pub_thread = PubThread(port, zmq_context, server)
     pub_thread.daemon = True
     pub_thread.start()
 
-    sub_thread = SubThread(neighboor_ports, zmq_context)
+    sub_thread = SubThread(neighboor_ports, zmq_context, server)
     sub_thread.daemon = True
     sub_thread.start()
 
