@@ -8,9 +8,10 @@ from queue import Queue
 
 from states import State, Leader, Follower
 from messages.append_entries import AppendEntries
+from messages.message import Message
+from messages.message import MessageHandler
 
 logger = logging.getLogger(__name__)
-msg_queue = Queue(maxsize=100)
 
 # Updated on stable storage before responding to RPCs
 class PresistentData():
@@ -36,41 +37,33 @@ class Server():
         self._volitile_data = volitile_data
         self._state = state
         self._commit_indx = 0
+        self._msg_queue = Queue(maxsize=100)
         self.start_heartbeat()
 
     def _on_reciving_command(self, commands) -> None:
         if isinstance(self._state, Leader):
-            self._log.append(new_entry)
 
-            new_entry = AppendEntries(self._presistent_data._current_term,
+            new_entry = AppendEntries(self._id,
+                                      self._presistent_data._current_term,
                                       self._id,
                                       self._presistent_data._last_log_idx,
                                       self._presistent_data._last_log_term,
                                       commands,
-                                      self._commit_indx
+                                      self._commit_idx
                                       )
 
-            msg_queue.append(new_entry)
+            # Upon reciving client command the leader appends it to its Log
+            self._log.append(new_entry)
+            logger.debug(f"Recived Client Commands: {commands}")
+
+            self._msg_queue.append(new_entry)
 
         elif isinstance(self._state, Follower):
             # Redirect to leader
             pass
 
     def _send_append_entry(self) -> None:
-        msg_queue.put('append this entry')
-
-    def _send_heart_beat(self) -> None:
-        if isinstance(self._state, Leader):
-
-            new_entry = AppendEntries(self._presistent_data._current_term,
-                                      self._id,
-                                      self._presistent_data._last_log_idx,
-                                      self._presistent_data._last_log_term,
-                                      [],
-                                      self._commit_indx
-                                      )
-
-            msg_queue.append(new_entry)
+        self._msg_queue.put('append this entry')
 
     def _schedule(self):
         self._send_heart_beat()
@@ -95,24 +88,17 @@ class SubThread(threading.Thread):
         socket = self._zmq_context.socket(zmq.SUB)
 
         for i in range(len(self._neighboor_ports)):
+            # TO-DO: a msg handler shared among threads
+            msg_handler = MessageHandler()
             nport = self._neighboor_ports[i]
             socket.connect(f"tcp://localhost:{nport}")
             socket.setsockopt_string(zmq.SUBSCRIBE, "")
         while True:
-            msg = socket.recv_json()
-            logger.debug(f"Received: {msg}")
-
-            if isinstance(msg, AppendEntries):
-
-                data = msg.get('data')
-                prev_log_idx = data.get('prev_log_idx')
-                prev_log_term = data.get('prev_log_term')
-                
-                if data.get('term') < self._server.term:
-                    msg_queue.append((msg, False))
-                elif not self._server.log[prev_log_idx] or self._server.log[prev_log_idx].term != prev_log_term:
-                    msg_queue.append((msg, False))
-
+            raw = socket.recv_json()
+            logger.debug(f"Received: {raw}")
+            msg = Message.from_dict(raw)
+            msg_handler.setup(self._server._state)
+            msg_handler.handle(msg)
 
 class PubThread(threading.Thread):
 
@@ -128,10 +114,10 @@ class PubThread(threading.Thread):
 
         while True:
             # send messages to subs
-            msg = msg_queue.get()
+            msg = self._msg_queue.get()
 
             if isinstance(msg, AppendEntries):
-                socket.send_json({"type": "append_entry", "data": msg.to_dict()})
+                socket.send_json({"data": msg.to_dict()})
                 logger.debug("Sent: append_entry")
 
 def main():

@@ -1,12 +1,23 @@
 _MESSAGE_TYPES: dict[str, type] = {}
 # "append_entry": AppendEntries, "request_vote": RequestVote ...
 
+class MessageHandler(object):
+
+    def setup(self, state):
+        self._state = state
+
+    def handle(self, msg):
+        with self.lock:
+            if msg.type == _MESSAGE_TYPES.get('append_entry'):
+                self._state.do_append_entry(self._message)
+            elif msg.type == _MESSAGE_TYPES.get('append_entry_response'):
+                self._state.do_append_entry_response(self._message)
+
 class Message():
     type: str = None
 
-    def __init__(self, sender, reciver):
+    def __init__(self, sender):
         self._sender = sender
-        self._reciver = reciver
 
     def __init_subclass__(cls, **kwargs) -> None:
             super().__init_subclass__(**kwargs)
@@ -14,9 +25,6 @@ class Message():
                 _MESSAGE_TYPES[cls.type] = cls
 
     def to_dict(self) -> dict:
-        pass
-
-    def handle(self, server, msg_queue) -> dict:
         pass
 
     @staticmethod
