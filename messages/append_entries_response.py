@@ -1,7 +1,7 @@
 from messages.message import Message
 from states.follower import Follower
 
-class AppendEntries(Message):
+class AppendEntriesReponse(Message):
     type = "append_entry_response"
 
     def __init__(self, sender, msg, current_term, sucess = True) -> None:

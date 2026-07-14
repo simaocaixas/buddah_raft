@@ -33,11 +33,12 @@ class Server():
 
     def __init__(self, id: int, presistent_data: PresistentData, volitile_data: VolitileData, state: State) -> None:
         self._id = id
-        self._presistent_data = presistent_data
+        self._persistent_data = presistent_data
         self._volitile_data = volitile_data
         self._state = state
         self._commit_indx = 0
         self._msg_queue = Queue(maxsize=100)
+        self._neighbors = []
         self.start_heartbeat()
 
     def _on_reciving_command(self, commands) -> None:
@@ -78,19 +79,19 @@ class Server():
 
 class SubThread(threading.Thread):
 
-    def __init__(self, neighboor_ports: int, zmq_context, server):
+    def __init__(self, neighbor_ports: int, zmq_context, server):
         super().__init__()
-        self._neighboor_ports = neighboor_ports
+        self._neighbor_ports = neighbor_ports
         self._zmq_context = zmq_context
         self._server = server
 
     def run(self):
         socket = self._zmq_context.socket(zmq.SUB)
 
-        for i in range(len(self._neighboor_ports)):
+        for i in range(len(self._neighbor_ports)):
             # TO-DO: a msg handler shared among threads
             msg_handler = MessageHandler()
-            nport = self._neighboor_ports[i]
+            nport = self._neighbor_ports[i]
             socket.connect(f"tcp://localhost:{nport}")
             socket.setsockopt_string(zmq.SUBSCRIBE, "")
         while True:
@@ -133,10 +134,10 @@ def main():
     neighboor_count = len(sys.argv) - 2
     port = int(sys.argv[1])
 
-    neighboor_ports = []
+    neighbor_ports = []
     for i in range(neighboor_count):
         n_port = int(sys.argv[i + 2])
-        neighboor_ports.append(n_port)
+        neighbor_ports.append(n_port)
 
     zmq_context = zmq.Context()
 
@@ -146,7 +147,7 @@ def main():
     pub_thread.daemon = True
     pub_thread.start()
 
-    sub_thread = SubThread(neighboor_ports, zmq_context, server)
+    sub_thread = SubThread(neighbor_ports, zmq_context, server)
     sub_thread.daemon = True
     sub_thread.start()
 
