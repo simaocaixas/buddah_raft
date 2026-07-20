@@ -1,7 +1,9 @@
 from collections import defaultdict
 from messages.append_entries import AppendEntries
+from states.follower import Follower
+from states.state import State
 
-class Leader():
+class Leader(State):
     
     def __init__(self):
         self._next_indexes = defaultdict(int)
@@ -9,27 +11,63 @@ class Leader():
 
     def set_server(self, server):
         self._server = server
-        
-        neighboors = self._server._neighboor_ports
 
-        for n in neighboors:
-            self._nextIndexes[n.id_] = self._server._last_log_idx + 1
-            self._match_index[n.id_] = 0
+        neighbors = self._server._neighbor_ports
 
+        for n in neighbors:
+            self._next_indexes[n] = self._server._persistent_data._last_log_idx + 1
+            self._match_index[n] = 0
 
-    def do_append_entry_response(self, message):
-        
-        data = message.get('data')
-        
-        if (not data.sucess):
-            self._nextIndexes[message.sender] -= 1
-        
-            previous_entry_index = max(0, self._nextIndexes[message.sender] - 1)
-            previous_entry_term = self._server._log[previous_entry_index]._term
-            current = self._server._log[self._nextIndexes[message.sender]]
+        self._server.heartbeat_tick()
 
-            new_entry = AppendEntries(self._server._id,
-                                        self._server._presistent_data._current_term,
+    def on_command(self, commands):
+
+        entry = AppendEntries(self._server._id,
+                                self._server._persistent_data._current_term,
+                                self._server._id,
+                                self._server._persistent_data._last_log_idx,
+                                self._server._persistent_data._last_log_term,
+                                commands,
+                                self._server._commit_idx
+                                )
+
+        # Upon receiving client command the leader appends it to its Log
+        self._server._persistent_data._log.append(entry)
+
+        self._server._msg_queue.put(entry)
+
+        return None
+
+    def on_append_entry_response(self, message):
+
+        neighbor_term = message._term
+        sender = message._sender
+        success = message._success
+
+        # Was the append entry successfully appended to followers log?
+        if (not success):
+
+            # Was it because my term is out of date (stale leader)?
+            if neighbor_term > self._server._persistent_data._current_term:
+
+                self._server._persistent_data._current_term = neighbor_term
+                self._server._persistent_data._voted_for = None
+
+                follower = Follower()
+                follower.set_server(self._server)
+                self._server._state = follower
+
+                return None
+
+            # It needed an earlier entry
+            self._next_indexes[sender] = max(0, self._next_indexes[sender] - 1)
+
+            previous_entry_index = max(0, self._next_indexes[sender] - 1)
+            previous_entry_term = self._server._persistent_data._log[previous_entry_index]._term
+            current = self._server._persistent_data._log[self._next_indexes[sender]]
+
+            entry = AppendEntries(self._server._id,
+                                        self._server._persistent_data._current_term,
                                         self._server._id,
                                         previous_entry_index,
                                         previous_entry_term,
@@ -37,21 +75,21 @@ class Leader():
                                         self._server._commit_idx
                                         )
 
-            self._server._log.append(new_entry)
-            self._msg_queue.append(new_entry)
+            self._server._msg_queue.put(entry)
 
         else:
-            self._next_indexes[message.sender] = max(self._next_indexes[message.sender] + 1, self._server._last_log_idx)
-        
+            self._next_indexes[sender] = min(self._next_indexes[sender] + 1, self._server._persistent_data._last_log_idx + 1)
+
         return None
 
-
     def send_heart_beat(self) -> None:
-        new_entry = AppendEntries(self._server._presistent_data._current_term,
+        new_entry = AppendEntries(self._server._id,
+                                  self._server._persistent_data._current_term,
                                   self._server._id,
-                                  self._server._presistent_data._last_log_idx,
-                                  self._server._presistent_data._last_log_term,
+                                  self._server._persistent_data._last_log_idx,
+                                  self._server._persistent_data._last_log_term,
                                   [],
                                   self._server._commit_idx
                                   )
-        self._msg_queue.append(new_entry)
+
+        self._server._msg_queue.put(new_entry)
