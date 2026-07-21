@@ -3,6 +3,8 @@ import sys
 import threading
 import time
 import logging
+import asyncio
+import json
 from queue import Queue
 
 
@@ -46,31 +48,7 @@ class Server():
         t.daemon = True
         t.start()
 
-class SubThread(threading.Thread):
-
-    def __init__(self, neighbor_ports: int, zmq_context, server):
-        super().__init__()
-        self._neighbor_ports = neighbor_ports
-        self._zmq_context = zmq_context
-        self._server = server
-
-    def run(self):
-        socket = self._zmq_context.socket(zmq.SUB)
-
-        for i in range(len(self._neighbor_ports)):
-            # TODO: a msg handler shared among threads
-            msg_handler = MessageHandler()
-            nport = self._neighbor_ports[i]
-            socket.connect(f"tcp://localhost:{nport}")
-            socket.setsockopt_string(zmq.SUBSCRIBE, "")
-        while True:
-            raw = socket.recv_json()
-            logger.debug(f"Received: {raw}")
-            msg = Message.from_dict(raw)
-            msg_handler.setup(self._server._state)
-            msg_handler.handle(msg)
-
-class PubThread(threading.Thread):
+class RouterThread(threading.Thread):
 
     def __init__(self, port: int, zmq_context, server):
         super().__init__()
@@ -78,17 +56,37 @@ class PubThread(threading.Thread):
         self._zmq_context = zmq_context
         self._server = server
 
-    def run(self):
-        socket = self._zmq_context.socket(zmq.PUB)
+        socket = self._zmq_context.socket(zmq.ROUTER)
+        socket.setsockopt_string(zmq.IDENTITY, str(self._server._id))
         socket.bind(f"tcp://localhost:{self._port}")
+        self._socket = socket
+
+
+    async def run(self):
+        logger.debug(f"Started on tcp://localhost:{self._port}")
+
+        msg_handler = MessageHandler()
+        msg_handler.setup(self._server._state)
+
+        poller = zmq.Poller()
+        poller.register(self._socket, zmq.POLLIN)
 
         while True:
-            msg = self._msg_queue.get()
+            events = dict(poller.poll(100))
 
-            if isinstance(msg, AppendEntries):
-                socket.send_json({"data": msg.to_dict()})
-                logger.debug("Sent: append_entry")
+            if self._socket in events:
+                # handle event in the socket queue 
+                pass
 
+            while not self._server._msg_queue.empty():
+                out_msg = self._server._msg_queue.get_nowait()
+                payload = json.dumps({"type": out_msg.type, "data": out_msg.to_dict()}).encode()
+
+                if out_msg._reciver is None:
+                    # broadcast
+                    pass
+                else:
+                    self._socket.send_multipart([str(out_msg._reciver).encode(), b"", payload])
 def main():
 
     logging.basicConfig(
@@ -111,16 +109,11 @@ def main():
 
     server = Server(port, PersistentData(0, None, []), VolatileData(0, 0), Follower(), neighbor_ports)
 
-    pub_thread = PubThread(port, zmq_context, server)
-    pub_thread.daemon = True
-    pub_thread.start()
+    router_thread = RouterThread(port, zmq_context, server)
+    router_thread.daemon = True
+    router_thread.start()
 
-    sub_thread = SubThread(neighbor_ports, zmq_context, server)
-    sub_thread.daemon = True
-    sub_thread.start()
-
-    sub_thread.join()
-    pub_thread.join()
+    router_thread.join()
 
 if __name__ == "__main__":
     main()
