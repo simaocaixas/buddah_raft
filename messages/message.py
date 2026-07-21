@@ -9,23 +9,23 @@ class MessageHandler(object):
     def handle(self, msg):
 
         if msg.type == _MESSAGE_TYPES.get('append_entry'):
-            self._state.do_append_entry(msg)
+            self._state.on_append_entry(msg)
 
         elif msg.type == _MESSAGE_TYPES.get('append_entry_response'):
-            self._state.do_append_entry_response(msg)
+            self._state.on_append_entry_response(msg)
 
         elif msg.type == _MESSAGE_TYPES.get('request_vote'):
-            self._state.on_vote_request(msg)
+            self._state.on_request_vote(msg)
 
         elif msg.type == _MESSAGE_TYPES.get('request_vote_response'):
-            self._state.on_vote_response(msg)
+            self._state.on_request_vote_response(msg)
 
 class Message():
     type: str = None
 
-    def __init__(self, sender, reciver=None):
+    def __init__(self, sender, reciever=None):
         self._sender = sender
-        self._reciver = reciver
+        self._reciever = reciever
 
     def __init_subclass__(cls, **kwargs) -> None:
             super().__init_subclass__(**kwargs)

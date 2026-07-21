@@ -4,5 +4,8 @@ class Command():
         self._operation = operation
         self._value = value
 
-
-
+    def to_dict(self):
+        return {
+            'operation': self._operation,
+            'value': self._value,
+        }

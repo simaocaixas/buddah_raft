@@ -12,7 +12,7 @@ class Leader(State):
     def set_server(self, server):
         self._server = server
 
-        neighbors = self._server._neighbor_ports
+        neighbors = self._server._neighbors
 
         for n in neighbors:
             self._next_indexes[n] = self._server._persistent_data._last_log_idx + 1
@@ -23,6 +23,7 @@ class Leader(State):
     def on_command(self, commands):
 
         entry = AppendEntries(self._server._id,
+                              None,
                                 self._server._persistent_data._current_term,
                                 self._server._id,
                                 self._server._persistent_data._last_log_idx,
@@ -67,6 +68,7 @@ class Leader(State):
             current = self._server._persistent_data._log[self._next_indexes[sender]]
 
             entry = AppendEntries(self._server._id,
+                                  sender,
                                         self._server._persistent_data._current_term,
                                         self._server._id,
                                         previous_entry_index,
@@ -84,6 +86,7 @@ class Leader(State):
 
     def send_heart_beat(self) -> None:
         new_entry = AppendEntries(self._server._id,
+                                  None,
                                   self._server._persistent_data._current_term,
                                   self._server._id,
                                   self._server._persistent_data._last_log_idx,
