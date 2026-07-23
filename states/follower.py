@@ -12,35 +12,35 @@ class Follower(State):
         prev_log_term = message._prev_log_term
         entries = message._entries
 
-        if term < self._server._persistent_data._current_term:
-            response = AppendEntriesResponse(self._server._id, sender, self._server._persistent_data._current_term, False)
-            self._server._msg_queue.put(response)
+        if term < self._server._current_term:
+            response = AppendEntriesResponse(self._server._id, sender, self._server._current_term, False)
+            self._server.enqueue(response)
             return None
 
         self._deadline = self._next_timeout()
 
         if leader_commit > self._server._commit_idx:
-            self._server._commit_idx = min(leader_commit, len(self._server._persistent_data._log) - 1)
+            self._server._commit_idx = min(leader_commit, len(self._server._log) - 1)
 
-        elif len(self._server._persistent_data._log) < prev_log_idx or (len(self._server._persistent_data._log) > 0 and self._server._persistent_data._log[prev_log_idx]._term != prev_log_term)        :
-            response = AppendEntriesResponse(self._server._id, sender, self._server._persistent_data._current_term, False)
-            self._server._msg_queue.put(response)
+        elif len(self._server._log) < prev_log_idx or (len(self._server._log) > 0 and self._server._log[prev_log_idx]._term != prev_log_term)        :
+            response = AppendEntriesResponse(self._server._id, sender, self._server._current_term, False)
+            self._server.enqueue(response)
             return None
         else:
             insert_idx = prev_log_idx + 1
 
-            if insert_idx < len(self._server._persistent_data._log) and self._server._persistent_data._log[insert_idx]._term != term:
+            if insert_idx < len(self._server._log) and self._server._log[insert_idx]._term != term:
                 # conflicting entry delete it and everything after it
-                self._server._persistent_data._log = self._server._persistent_data._log[:insert_idx]
+                self._server._log = self._server._log[:insert_idx]
 
-            self._server._persistent_data._log.extend(entries)
+            self._server._log.extend(entries)
 
-            response = AppendEntriesResponse(self._server._id, sender, self._server._persistent_data._current_term, True)
-            self._server._msg_queue.put(response)
+            response = AppendEntriesResponse(self._server._id, sender, self._server._current_term, True)
+            self._server.enqueue(response)
 
 
-            self._server._persistent_data._last_log_idx = prev_log_idx
-            self._server._persistent_data._last_log_term = prev_log_term
+            self._server._last_log_idx = prev_log_idx
+            self._server._last_log_term = prev_log_term
             return None
 
     def on_election_timeout(self):

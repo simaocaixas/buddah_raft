@@ -1,6 +1,7 @@
 from collections import defaultdict
 from messages import AppendEntries
 from states.state import State
+import threading
 
 class Leader(State):
     name = "leader"
@@ -15,27 +16,27 @@ class Leader(State):
         neighbors = self._server._neighbors
 
         for n in neighbors:
-            self._next_indexes[n] = self._server._persistent_data._last_log_idx + 1
+            self._next_indexes[n] = self._server._last_log_idx + 1
             self._match_index[n] = 0
 
-        self._server.heartbeat_tick()
+        self._heartbeat_tick()
 
     def on_command(self, commands):
 
         entry = AppendEntries(self._server._id,
                               None,
-                                self._server._persistent_data._current_term,
+                                self._server._current_term,
                                 self._server._id,
-                                self._server._persistent_data._last_log_idx,
-                                self._server._persistent_data._last_log_term,
+                                self._server._last_log_idx,
+                                self._server._last_log_term,
                                 commands,
                                 self._server._commit_idx
                                 )
 
         # Upon receiving client command the leader appends it to its Log
-        self._server._persistent_data._log.append(entry)
+        self._server._log.append(entry)
 
-        self._server._msg_queue.put(entry)
+        self._server.enqueue(entry)
 
         return None
 
@@ -49,10 +50,10 @@ class Leader(State):
         if (not success):
 
             # Was it because my term is out of date (stale leader)?
-            if neighbor_term > self._server._persistent_data._current_term:
+            if neighbor_term > self._server._current_term:
 
-                self._server._persistent_data._current_term = neighbor_term
-                self._server._persistent_data._voted_for = None
+                self._server._current_term = neighbor_term
+                self._server._voted_for = None
 
                 follower = State.create("follower")
                 follower.set_server(self._server)
@@ -64,12 +65,12 @@ class Leader(State):
             self._next_indexes[sender] = max(0, self._next_indexes[sender] - 1)
 
             previous_entry_index = max(0, self._next_indexes[sender] - 1)
-            previous_entry_term = self._server._persistent_data._log[previous_entry_index]._term
-            current = self._server._persistent_data._log[self._next_indexes[sender]]
+            previous_entry_term = self._server._log[previous_entry_index]._term
+            current = self._server._log[self._next_indexes[sender]]
 
             entry = AppendEntries(self._server._id,
                                   sender,
-                                        self._server._persistent_data._current_term,
+                                        self._server._current_term,
                                         self._server._id,
                                         previous_entry_index,
                                         previous_entry_term,
@@ -77,22 +78,28 @@ class Leader(State):
                                         self._server._commit_idx
                                         )
 
-            self._server._msg_queue.put(entry)
+            self._server.enqueue(entry)
 
         else:
-            self._next_indexes[sender] = min(self._next_indexes[sender] + 1, self._server._persistent_data._last_log_idx + 1)
+            self._next_indexes[sender] = min(self._next_indexes[sender] + 1, self._server._last_log_idx + 1)
 
         return None
 
-    def send_heart_beat(self) -> None:
+    def _heartbeat_tick(self):
+        self._send_heart_beat()
+        t = threading.Timer(1, self._heartbeat_tick)
+        t.daemon = True
+        t.start()
+
+    def _send_heart_beat(self) -> None:
         new_entry = AppendEntries(self._server._id,
                                   None,
-                                  self._server._persistent_data._current_term,
+                                  self._server._current_term,
                                   self._server._id,
-                                  self._server._persistent_data._last_log_idx,
-                                  self._server._persistent_data._last_log_term,
+                                  self._server._last_log_idx,
+                                  self._server._last_log_term,
                                   [],
                                   self._server._commit_idx
                                   )
 
-        self._server._msg_queue.put(new_entry)
+        self._server.enqueue(new_entry)

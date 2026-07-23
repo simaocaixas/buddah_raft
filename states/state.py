@@ -33,9 +33,9 @@ class State():
     def on_request_vote(self, message):
         candidate_term = message._term
 
-        if candidate_term > self._server._persistent_data._current_term:
-            self._server._persistent_data._current_term = candidate_term
-            self._server._persistent_data._voted_for = None
+        if candidate_term > self._server._current_term:
+            self._server._current_term = candidate_term
+            self._server._voted_for = None
             follower = State.create("follower")
             follower.set_server(self._server)
             self._server._state = follower
@@ -46,38 +46,35 @@ class State():
         candidate_last_log_idx = message._last_log_index
         candidate_last_log_term = message._last_log_term
 
-        if candidate_term < self._server._persistent_data._current_term:
+        if candidate_term < self._server._current_term:
             response = RequestVoteResponse(self._server._id,
                                            sender,
-                                           self._server._persistent_data._current_term,
+                                           self._server._current_term,
                                            False
                                            )
 
-        elif (self._server._persistent_data._voted_for is None or self._server._persistent_data._voted_for == candidate_id) \
-                and candidate_last_log_idx >= self._server._persistent_data._last_log_idx \
-                and candidate_last_log_term >= self._server._persistent_data._last_log_term:
-            self._server._persistent_data._voted_for = candidate_id
+        elif (self._server._voted_for is None or self._server._voted_for == candidate_id) \
+                and candidate_last_log_idx >= self._server._last_log_idx \
+                and candidate_last_log_term >= self._server._last_log_term:
+            self._server._voted_for = candidate_id
             self._deadline = self._next_timeout()
             response = RequestVoteResponse(self._server._id,
                             sender,
-                            self._server._persistent_data._current_term,
+                            self._server._current_term,
                             True
                             )
         else:
             response = RequestVoteResponse(self._server._id,
                             sender,
-                            self._server._persistent_data._current_term,
+                            self._server._current_term,
                             False
                             )
-        self._server._msg_queue.put(response)
+        self._server.enqueue(response)
 
         return None
 
     def on_request_vote_response(self, message):
         """Called when a peer replies to our RequestVote RPC."""
-
-    def send_heart_beat(self):
-        """Called on the heartbeat tick to keep followers from timing out."""
 
     def on_election_timeout(self):
         """Called when this server's election deadline elapses."""

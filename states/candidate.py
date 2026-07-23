@@ -16,16 +16,16 @@ class Candidate(State):
         success = message._success
         term = message._term
 
-        if term > self._server._persistent_data._current_term:
-            self._server._persistent_data._current_term = term
-            self._server._persistent_data._voted_for = None
+        if term > self._server._current_term:
+            self._server._current_term = term
+            self._server._voted_for = None
             follower = State.create("follower")
             follower.set_server(self._server)
             self._server._state = follower
             return None
 
         # A response from a stale term of ours no longer applies.
-        if term < self._server._persistent_data._current_term:
+        if term < self._server._current_term:
             return None
 
         self._voters[voter] = success
@@ -41,7 +41,7 @@ class Candidate(State):
         sender = message._sender
 
         # This append entry from a legit leader?
-        if leader_term >= self._server._persistent_data._current_term:
+        if leader_term >= self._server._current_term:
             follower = State.create("follower")
             follower.set_server(self._server)
             # Update state and process a normal append entry
@@ -50,25 +50,25 @@ class Candidate(State):
 
             return None
 
-        elif leader_term < self._server._persistent_data._current_term:
-            response = AppendEntriesResponse(self._server._id, sender, self._server._persistent_data._current_term, False)
-            self._server._msg_queue.put(response)
+        elif leader_term < self._server._current_term:
+            response = AppendEntriesResponse(self._server._id, sender, self._server._current_term, False)
+            self._server.enqueue(response)
             return None
 
     def on_election_timeout(self):
         self._start_election()
 
     def _start_election(self):
-        self._server._persistent_data._current_term += 1
+        self._server._current_term += 1
         self._voters[self._server._id] = True
         self._deadline = self._next_timeout()
 
         request = RequestVote(self._server._id,
                               None,
-                        self._server._persistent_data._current_term,
+                        self._server._current_term,
                         self._server._id,
-                        self._server._persistent_data._last_log_idx,
-                        self._server._persistent_data._last_log_term,
+                        self._server._last_log_idx,
+                        self._server._last_log_term,
                         )
 
-        self._server._msg_queue.put(request)
+        self._server.enqueue(request)

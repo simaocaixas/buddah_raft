@@ -5,48 +5,50 @@ import logging
 import json
 import yaml
 import time
+import queue
 from queue import Queue
 
 from states import State, Follower
 from messages import AppendEntries, Message, MessageHandler
 
-
 logger = logging.getLogger(__name__)
 
-# Updated on stable storage before responding to RPCs
-class PersistentData():
+class Server():
 
-    def __init__(self, current_term: int, voted_for: int, log: list[AppendEntries]) -> None:
+    def __init__(self, id: int,
+                 current_term: int,
+                 voted_for: int,
+                 log: list[AppendEntries],
+                 committed_index: int,
+                 last_applied: int,
+                 state: State,
+                 neighbors: dict[int, tuple[str, int]]) -> None:
+
+        self._id = id
+
+        # Persistent Data
         self._current_term = current_term
         self._voted_for = voted_for
         self._log = log
         self._last_log_idx = 0;
         self._last_log_term = 0;
 
-class VolatileData():
-
-    def __init__(self, committed_index: int, last_applied: int) -> None:
+        # Volatile Data
         self._committed_index = committed_index
         self._last_applied = last_applied
 
-class Server():
 
-    def __init__(self, id: int, persistent_data: PersistentData, volatile_data: VolatileData, state: State, neighbors: dict[int, tuple[str, int]]) -> None:
-        self._id = id
-        self._persistent_data = persistent_data
-        self._volatile_data = volatile_data
         self._commit_idx = 0
-        self._msg_queue = Queue(maxsize=100)
         self._neighbors = neighbors
+        self._msg_queue = Queue(maxsize=1000)
         self._state = state
         self._state.set_server(self)
 
-    # I belive this never stops
-    def heartbeat_tick(self):
-        self._state.send_heart_beat()
-        t = threading.Timer(1, self.heartbeat_tick)
-        t.daemon = True
-        t.start()
+    def enqueue(self, msg) -> None:
+        try:
+            self._msg_queue.put_nowait(msg)
+        except queue.Full:
+            logger.warning(f"Message queue is full, dropping message: {msg.to_dict()}")
 
     class RouterThread(threading.Thread):
 
@@ -134,7 +136,7 @@ def main():
     for n in nodes:
         neighboor_id = n['id']
         neighboors[neighboor_id] = (n['host'], n['port'])
-    server = Server(id, PersistentData(0, None, []), VolatileData(0, 0), Follower(), neighboors)
+    server = Server(id, 0, None, [], 0, 0, Follower(), neighboors)
 
     router_thread = Server.RouterThread(neighboors[id][1], zmq_context, server)
     router_thread.daemon = True
