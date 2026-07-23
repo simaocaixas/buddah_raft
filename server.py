@@ -1,6 +1,5 @@
 import zmq
 import sys
-import threading
 import logging
 import json
 import yaml
@@ -50,68 +49,63 @@ class Server():
         except queue.Full:
             logger.warning(f"Message queue is full, dropping message: {msg.to_dict()}")
 
-    class RouterThread(threading.Thread):
+    def run_router(self, port, zmq_context):
+        logger.debug(f"Starting on tcp://localhost:{port}")
 
-        def __init__(self, port: int, zmq_context, server):
-            super().__init__()
-            self._port = port
-            self._zmq_context = zmq_context
-            self._server = server
+        socket = zmq_context.socket(zmq.ROUTER)
+        socket.setsockopt_string(zmq.IDENTITY, str(self._id))
+        socket.setsockopt(zmq.RECONNECT_IVL, 100)
+        socket.setsockopt(zmq.RECONNECT_IVL_MAX, 2000)
+        socket.bind(f"tcp://localhost:{port}")
 
-            socket = self._zmq_context.socket(zmq.ROUTER)
-            socket.setsockopt_string(zmq.IDENTITY, str(self._server._id))
-            socket.bind(f"tcp://localhost:{self._port}")
+        # Establish a connection with other nodes when possible
+        # Keeps retrying every 100ms with a max back off up to 2s
+        for neighboor_id, (neighboor_host, neighboor_port) in self._neighbors.items():
 
-            self._socket = socket
+            if neighboor_id == self._id:
+                continue
 
-            for neighboor_id, (neighboor_host, neighboor_port) in self._server._neighbors.items():
+            socket.connect(f"tcp://{neighboor_host}:{neighboor_port}")
 
-                if neighboor_id == self._server._id:
-                    continue
+        msg_handler = MessageHandler()
 
-                socket.connect(f"tcp://{neighboor_host}:{neighboor_port}")
+        poller = zmq.Poller()
+        poller.register(socket, zmq.POLLIN)
 
-            return None
+        # Checks incoming messages, timeout-deadline and does a msg_queue flush
+        while True:
+            # Waits up to 100ms for a message, returns immediately if one arrives;
+            events = dict(poller.poll(100))
 
-        def run(self):
-            logger.debug(f"Started on tcp://localhost:{self._port}")
+            # I decided to prioritize the message flush over the handling of incoming messages
+            # Only one incoming message is handled per loop cycle
+            if socket in events:
+                sender, _, raw = socket.recv_multipart()
+                in_msg = Message.from_dict(json.loads(raw))
 
-            msg_handler = MessageHandler()
+                logger.debug(f"{self._state.name.upper()} - Reciving a message: {in_msg.to_dict()}")
 
-            poller = zmq.Poller()
-            poller.register(self._socket, zmq.POLLIN)
+                msg_handler.handle(in_msg, self._state)
 
-            while True:
-                events = dict(poller.poll(100))
+            if time.time() >= self._state._deadline:
+                self._state.on_election_timeout()
 
-                # Anything from other peer
-                if self._socket in events:
-                    sender, _, raw = self._socket.recv_multipart()
-                    msg_handler.setup(self._server._state)
-                    in_msg = Message.from_dict(json.loads(raw))
-                    
-                    logger.debug(f"{self._server._state.name.upper()} - Reciving a message: {in_msg.to_dict()}")
-                    
-                    msg_handler.handle(in_msg)
+            while not self._msg_queue.empty():
+                out_msg = self._msg_queue.get()
+                payload = json.dumps({"type": out_msg.type, "data": out_msg.to_dict()}).encode()
 
-                if time.time() >= self._server._state._deadline:
-                    self._server._state.on_election_timeout()
+                logger.debug(f"{self._state.name.upper()} - Sending a message: {out_msg.to_dict()}")
 
-                # Send everything in the queue
-                while not self._server._msg_queue.empty():
-                    out_msg = self._server._msg_queue.get()
-                    payload = json.dumps({"type": out_msg.type, "data": out_msg.to_dict()}).encode()
-                
-                    logger.debug(f"{self._server._state.name.upper()} - Sending a message: {out_msg.to_dict()}")
+                if out_msg._reciever is None:
+                    # No reciever set means Broadcast
+                    for nid in self._neighbors:
+                        if nid == self._id:
+                            continue
 
-                    if out_msg._reciever is None:
-                        for nid in self._server._neighbors:
-                            if nid == self._server._id:
-                                continue
-                            self._socket.send_multipart([str(nid).encode(), b"", payload])
-                    else:
-                        # If reciever exists, out_msg is a response, we need to reply just to this node
-                        self._socket.send_multipart([str(out_msg._reciever).encode(), b"", payload])
+                        socket.send_multipart([str(nid).encode(), b"", payload])
+                else:
+                    # Reciever set means Unicast
+                    socket.send_multipart([str(out_msg._reciever).encode(), b"", payload])
 
 def main():
 
@@ -137,11 +131,7 @@ def main():
         neighboor_id = n['id']
         neighboors[neighboor_id] = (n['host'], n['port'])
     server = Server(id, 0, None, [], 0, 0, Follower(), neighboors)
-
-    router_thread = Server.RouterThread(neighboors[id][1], zmq_context, server)
-    router_thread.daemon = True
-    router_thread.start()
-    router_thread.join()
+    server.run_router(neighboors[id][1], zmq_context)
 
 if __name__ == "__main__":
     main()

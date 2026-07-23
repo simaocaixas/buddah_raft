@@ -3,22 +3,19 @@ _MESSAGE_TYPES: dict[str, type] = {}
 
 class MessageHandler(object):
 
-    def setup(self, state):
-        self._state = state
-
-    def handle(self, msg):
+    def handle(self, msg, state):
 
         if msg.type == 'append_entry':
-            self._state.on_append_entry(msg)
+            state.on_append_entry(msg)
 
         elif msg.type == 'append_entry_response':
-            self._state.on_append_entry_response(msg)
+            state.on_append_entry_response(msg)
 
         elif msg.type == 'request_vote':
-            self._state.on_request_vote(msg)
+            state.on_request_vote(msg)
 
         elif msg.type == 'request_vote_response':
-            self._state.on_request_vote_response(msg)
+            state.on_request_vote_response(msg)
 
 class Message():
     type: str = None
