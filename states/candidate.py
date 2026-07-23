@@ -1,53 +1,37 @@
 from collections import defaultdict
-from messages.request_vote_response import RequestVoteResponse
-from messages.append_entries_response import AppendEntriesResponse
-from messages.request_vote import RequestVote
-from states.leader import Leader
-from states.follower import Follower
+from messages import AppendEntriesResponse, RequestVote
 from states.state import State
 
+
 class Candidate(State):
-    
+    name = "candidate"
+
     def set_server(self, server):
-        self._server = server
+        super().set_server(server)
         self._voters = defaultdict(int)
-
-    def on_request_vote(self, message):
-
-        sender = message._sender
-        candidate_term = message._term
-        candidate = message._candidate_id
-        candidate_last_log_idx = message._last_log_index
-        candidate_last_log_term = message._last_log_term
-
-        if candidate_term < self._server._persistent_data._current_term:
-            response = RequestVoteResponse(self._server._id,
-                                           sender,
-                                           self._server._persistent_data._current_term,
-                                           message,
-                                           False
-                                           )
-        elif self._server._persistent_data._voted_for == None or self._server._persistent_data._voted_for == candidate:
-            if candidate_last_log_idx >= self._server._persistent_data._last_log_idx and candidate_last_log_term >= self._server._persistent_data._last_log_term:
-                response = RequestVoteResponse(self._server._id,
-                                sender,
-                                self._server._persistent_data._current_term,
-                                message,
-                                True
-                                )
-                self._server._persistent_data._voted_for = candidate
-        self._server._msg_queue.put(response)
-
-        return None
+        self._start_election()
 
     def on_request_vote_response(self, message):
         voter = message._sender
         success = message._success
+        term = message._term
+
+        if term > self._server._persistent_data._current_term:
+            self._server._persistent_data._current_term = term
+            self._server._persistent_data._voted_for = None
+            follower = State.create("follower")
+            follower.set_server(self._server)
+            self._server._state = follower
+            return None
+
+        # A response from a stale term of ours no longer applies.
+        if term < self._server._persistent_data._current_term:
+            return None
 
         self._voters[voter] = success
-        if self._voters.values().count(True) > (len(self._server._neighboors / 2)):
-            leader = Leader()
-
+        if list(self._voters.values()).count(True) > (len(self._server._neighbors) / 2):
+            leader = State.create("leader")
+            leader.set_server(self._server)
             self._server._state = leader
 
             return None
@@ -58,24 +42,27 @@ class Candidate(State):
 
         # This append entry from a legit leader?
         if leader_term >= self._server._persistent_data._current_term:
-            follower = Follower()
-
+            follower = State.create("follower")
+            follower.set_server(self._server)
             # Update state and process a normal append entry
             self._server._state = follower
             self._server._state.on_append_entry(message)
-        
-            # TODO Reset election timeout
+
             return None
 
         elif leader_term < self._server._persistent_data._current_term:
-            response = AppendEntriesResponse(self._server._id, sender, message, self._server._persistent_data._current_term, False)
+            response = AppendEntriesResponse(self._server._id, sender, self._server._persistent_data._current_term, False)
             self._server._msg_queue.put(response)
             return None
-    
+
+    def on_election_timeout(self):
+        self._start_election()
+
     def _start_election(self):
         self._server._persistent_data._current_term += 1
         self._voters[self._server._id] = True
-        # TODO reset election timer
+        self._deadline = self._next_timeout()
+
         request = RequestVote(self._server._id,
                               None,
                         self._server._persistent_data._current_term,

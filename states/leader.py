@@ -1,16 +1,16 @@
 from collections import defaultdict
-from messages.append_entries import AppendEntries
-from states.follower import Follower
+from messages import AppendEntries
 from states.state import State
 
 class Leader(State):
-    
+    name = "leader"
+
     def __init__(self):
         self._next_indexes = defaultdict(int)
         self._match_index = defaultdict(int)
 
     def set_server(self, server):
-        self._server = server
+        super().set_server(server)
 
         neighbors = self._server._neighbors
 
@@ -54,7 +54,7 @@ class Leader(State):
                 self._server._persistent_data._current_term = neighbor_term
                 self._server._persistent_data._voted_for = None
 
-                follower = Follower()
+                follower = State.create("follower")
                 follower.set_server(self._server)
                 self._server._state = follower
 

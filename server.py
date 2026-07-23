@@ -1,19 +1,15 @@
 import zmq
 import sys
 import threading
-import time
 import logging
-import asyncio
 import json
 import yaml
+import time
 from queue import Queue
 
+from states import State, Follower
+from messages import AppendEntries, Message, MessageHandler
 
-from states import State, Leader, Follower
-from messages.append_entries import AppendEntries
-from messages.message import Message
-from messages.message import MessageHandler
-from messages.command import Command
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +21,7 @@ class PersistentData():
         self._voted_for = voted_for
         self._log = log
         self._last_log_idx = 0;
-        self._last_log_term = None;
+        self._last_log_term = 0;
 
 class VolatileData():
 
@@ -39,11 +35,13 @@ class Server():
         self._id = id
         self._persistent_data = persistent_data
         self._volatile_data = volatile_data
-        self._state = state
         self._commit_idx = 0
         self._msg_queue = Queue(maxsize=100)
         self._neighbors = neighbors
+        self._state = state
+        self._state.set_server(self)
 
+    # I belive this never stops
     def heartbeat_tick(self):
         self._state.send_heart_beat()
         t = threading.Timer(1, self.heartbeat_tick)
@@ -65,8 +63,10 @@ class Server():
             self._socket = socket
 
             for neighboor_id, (neighboor_host, neighboor_port) in self._server._neighbors.items():
+
                 if neighboor_id == self._server._id:
                     continue
+
                 socket.connect(f"tcp://{neighboor_host}:{neighboor_port}")
 
             return None
@@ -84,22 +84,23 @@ class Server():
 
                 # Anything from other peer
                 if self._socket in events:
-                    
-                    
                     sender, _, raw = self._socket.recv_multipart()
                     msg_handler.setup(self._server._state)
                     in_msg = Message.from_dict(json.loads(raw))
                     
-                    logger.debug(f"Reciving a message: {in_msg}")
+                    logger.debug(f"{self._server._state.name.upper()} - Reciving a message: {in_msg.to_dict()}")
                     
                     msg_handler.handle(in_msg)
+
+                if time.time() >= self._server._state._deadline:
+                    self._server._state.on_election_timeout()
 
                 # Send everything in the queue
                 while not self._server._msg_queue.empty():
                     out_msg = self._server._msg_queue.get()
                     payload = json.dumps({"type": out_msg.type, "data": out_msg.to_dict()}).encode()
                 
-                    logger.debug(f"Sending a message: {out_msg.to_dict()}")
+                    logger.debug(f"{self._server._state.name.upper()} - Sending a message: {out_msg.to_dict()}")
 
                     if out_msg._reciever is None:
                         for nid in self._server._neighbors:

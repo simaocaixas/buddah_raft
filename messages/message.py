@@ -8,16 +8,16 @@ class MessageHandler(object):
 
     def handle(self, msg):
 
-        if msg.type == _MESSAGE_TYPES.get('append_entry'):
+        if msg.type == 'append_entry':
             self._state.on_append_entry(msg)
 
-        elif msg.type == _MESSAGE_TYPES.get('append_entry_response'):
+        elif msg.type == 'append_entry_response':
             self._state.on_append_entry_response(msg)
 
-        elif msg.type == _MESSAGE_TYPES.get('request_vote'):
+        elif msg.type == 'request_vote':
             self._state.on_request_vote(msg)
 
-        elif msg.type == _MESSAGE_TYPES.get('request_vote_response'):
+        elif msg.type == 'request_vote_response':
             self._state.on_request_vote_response(msg)
 
 class Message():
