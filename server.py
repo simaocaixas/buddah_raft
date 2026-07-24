@@ -29,15 +29,15 @@ class Server():
         self._current_term = current_term
         self._voted_for = voted_for
         self._log = log
-        self._last_log_idx = 0;
-        self._last_log_term = 0;
+        self._last_log_idx = -1;
+        self._last_log_term = -1;
 
         # Volatile Data
         self._committed_index = committed_index
         self._last_applied = last_applied
 
 
-        self._commit_idx = 0
+        self._commit_idx = -1
         self._neighbors = neighbors
         self._msg_queue = Queue(maxsize=1000)
         self._state = state
