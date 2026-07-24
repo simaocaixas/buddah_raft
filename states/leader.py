@@ -1,5 +1,5 @@
 from collections import defaultdict
-from messages import AppendEntries
+from messages import AppendEntries, LogEntry
 from states.state import State
 import threading
 
@@ -23,20 +23,23 @@ class Leader(State):
 
     def on_command(self, commands):
 
-        entry = AppendEntries(self._server._id,
+        # A log entry are commands associated with a logic timestamp (term)
+        log_entry = LogEntry(self._server._current_term, commands)
+
+        msg = AppendEntries(self._server._id,
                               None,
                                 self._server._current_term,
                                 self._server._id,
                                 self._server._last_log_idx,
                                 self._server._last_log_term,
-                                commands,
+                                log_entry,
                                 self._server._commit_idx
                                 )
 
         # Upon receiving client command the leader appends it to its Log
-        self._server._log.append(entry)
+        self._server._log.append(log_entry)
 
-        self._server.enqueue(entry)
+        self._server.enqueue(msg)
 
         return None
 
@@ -66,7 +69,7 @@ class Leader(State):
 
             previous_entry_index = max(0, self._next_indexes[sender] - 1)
             previous_entry_term = self._server._log[previous_entry_index]._term
-            current = self._server._log[self._next_indexes[sender]]
+            log_entry = self._server._log[self._next_indexes[sender]]
 
             entry = AppendEntries(self._server._id,
                                   sender,
@@ -74,7 +77,7 @@ class Leader(State):
                                         self._server._id,
                                         previous_entry_index,
                                         previous_entry_term,
-                                        [current],
+                                        log_entry,
                                         self._server._commit_idx
                                         )
 
@@ -92,14 +95,16 @@ class Leader(State):
         t.start()
 
     def _send_heart_beat(self) -> None:
-        new_entry = AppendEntries(self._server._id,
+        empty_log_entry = LogEntry(self._server._current_term, [])
+
+        heartbeat = AppendEntries(self._server._id,
                                   None,
                                   self._server._current_term,
                                   self._server._id,
                                   self._server._last_log_idx,
                                   self._server._last_log_term,
-                                  [],
+                                  empty_log_entry,
                                   self._server._commit_idx
                                   )
 
-        self._server.enqueue(new_entry)
+        self._server.enqueue(heartbeat)

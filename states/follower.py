@@ -10,7 +10,7 @@ class Follower(State):
         leader_commit = message._leader_commit
         prev_log_idx = message._prev_log_idx
         prev_log_term = message._prev_log_term
-        entries = message._entries
+        log_entry = message._log_entry
 
         # Term Update
         if term > self._server._current_term:
@@ -44,22 +44,21 @@ class Follower(State):
             return None
         else:
             # Heartbeat Detection
-            if (entries):
+            if (log_entry._commands):
                 self._server._log = self._server._log[:prev_log_idx + 1]
 
-                # Append any new entries not already in the log
-                for entry in entries:
-                    self._server._log.append(entry)
+                # Append log entry not already in the log
+                # Design simplification: only one log entry per AppendEntries RPC
+                self._server._log.append(log_entry)
 
                 self._server._last_log_idx = len(self._server._log) - 1
-                self._server._last_log_term = entries[-1]._term
+                self._server._last_log_term = log_entry._term
 
             response = AppendEntriesResponse(self._server._id, sender, self._server._current_term, True)
             self._server.enqueue(response)
 
-            index_of_last_new_entry = prev_log_idx + len(entries)
             if leader_commit > self._server._commit_idx:
-                self._server._commit_idx = min(leader_commit, index_of_last_new_entry)
+                self._server._commit_idx = min(leader_commit, self._server._last_log_idx)
 
         return None
 
