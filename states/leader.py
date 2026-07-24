@@ -1,5 +1,5 @@
 from collections import defaultdict
-from messages import AppendEntries, LogEntry
+from messages import AppendEntries, AppendEntriesResponse, LogEntry
 from states.state import State
 import threading
 
@@ -17,7 +17,7 @@ class Leader(State):
 
         for n in neighbors:
             self._next_indexes[n] = self._server._last_log_idx + 1
-            self._match_index[n] = 0
+            self._match_index[n] = -1
 
         self._heartbeat_tick()
 
@@ -39,9 +39,44 @@ class Leader(State):
         # Upon receiving client command the leader appends it to its Log
         self._server._log.append(log_entry)
 
+        self._server._last_log_idx = len(self._server._log) - 1
+        self._server._last_log_term = self._server._current_term
+
+        # The leader has all of its own entries replicated
+        self._match_index[self._server._id] = self._server._last_log_idx
         self._server.enqueue(msg)
 
         return None
+
+    # This is here to avoid a split brain problem
+    def on_append_entry(self, message):
+        sender = message._sender
+        term = message._term
+
+        # There is another leader and i am the stale one
+        # I should convert to follower and answer
+        if term > self._server._current_term:
+
+            self._stop_heartbeat()
+
+            follower = State.create("follower")
+            follower.set_server(self._server)
+            # Update state and process a normal append entry
+            self._server._state = follower
+            self._server._state.on_append_entry(message)
+
+            return None
+
+        # There is another leader and he is the stale one
+        # I should convert him to follower sending my with current term
+        if term < self._server._current_term:
+            response = AppendEntriesResponse(self._server._id, sender, self._server._current_term, False)
+            self._server.enqueue(response)
+            return None
+
+        # My term == his term should be impossible
+        return None
+
 
     def on_append_entry_response(self, message):
 
@@ -57,6 +92,8 @@ class Leader(State):
 
                 self._server._current_term = neighbor_term
                 self._server._voted_for = None
+
+                self._stop_heartbeat()
 
                 follower = State.create("follower")
                 follower.set_server(self._server)
@@ -84,15 +121,51 @@ class Leader(State):
             self._server.enqueue(entry)
 
         else:
+            # The AppendEntry was successfull, we can advance both match_index and next_indexes
+            self._match_index[sender] = max(self._next_indexes[sender], self._match_index[sender])
             self._next_indexes[sender] = min(self._next_indexes[sender] + 1, self._server._last_log_idx + 1)
+
+            # Can we garantee that a majority quorum commited the entry?
+            majority = len(self._server._neighbors) // 2 + 1
+            indexes = sorted(self._match_index.values(), reverse=True)
+            
+            # N is the minimum index that every node log has already commited
+            N = indexes[majority - 1]
+
+            if N > self._server._commit_idx and N >= 0 and self._server._log[N]._term == self._server._current_term:
+                self._server._commit_idx = N
 
         return None
 
+
+    # Since it only needs a majority sized quorum to be elected the
+    # leader can still keep reciving votes and vote responses, this is that safeguard
+    def on_request_vote(self, message):
+        term = message._term
+        if term > self._server._current_term:
+            self._stop_heartbeat()
+        return super().on_request_vote(message)
+
+    def on_request_vote_response(self, message):
+        term = message._term
+        if term > self._server._current_term:
+            self._server._current_term = term
+            self._server._voted_for = None
+            self._stop_heartbeat()
+            follower = State.create("follower")
+            follower.set_server(self._server)
+            self._server._state = follower
+            return None
+
     def _heartbeat_tick(self):
         self._send_heart_beat()
-        t = threading.Timer(1, self._heartbeat_tick)
-        t.daemon = True
-        t.start()
+        timer = threading.Timer(1, self._heartbeat_tick)
+        timer.daemon = True
+        timer.start()
+        self._timer = timer
+
+    def _stop_heartbeat(self):
+        self._timer.cancel()
 
     def _send_heart_beat(self) -> None:
         empty_log_entry = LogEntry(self._server._current_term, [])

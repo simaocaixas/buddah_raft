@@ -59,8 +59,12 @@ class Candidate(State):
         self._start_election()
 
     def _start_election(self):
+        # Clean previous elections results
+        self._voters = defaultdict(int)
+
         self._server._current_term += 1
         self._voters[self._server._id] = True
+        self._server._voted_for = self._server._id
         self._deadline = self._next_timeout()
 
         request = RequestVote(self._server._id,

@@ -53,22 +53,29 @@ class State():
                                            False
                                            )
 
+        # Perform a safety check: comparing the index and term of the last entries in the log
+        # If the logs have last entries with different terms, then the log with the later term is more up-to-date
+        # If the logs end with the same term, then whichever log is longer is more up-to-date
         elif (self._server._voted_for is None or self._server._voted_for == candidate_id) \
-                and candidate_last_log_idx >= self._server._last_log_idx \
-                and candidate_last_log_term >= self._server._last_log_term:
-            self._server._voted_for = candidate_id
-            self._deadline = self._next_timeout()
-            response = RequestVoteResponse(self._server._id,
-                            sender,
-                            self._server._current_term,
-                            True
-                            )
+            and (candidate_last_log_term > self._server._last_log_term
+                 or (candidate_last_log_term == self._server._last_log_term
+                     and candidate_last_log_idx >= self._server._last_log_idx)):
+
+                self._server._voted_for = candidate_id
+                self._deadline = self._next_timeout()
+
+                response = RequestVoteResponse(self._server._id,
+                                sender,
+                                self._server._current_term,
+                                True
+                                )
         else:
             response = RequestVoteResponse(self._server._id,
                             sender,
                             self._server._current_term,
                             False
                             )
+
         self._server.enqueue(response)
 
         return None
